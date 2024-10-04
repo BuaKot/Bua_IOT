@@ -1,0 +1,252 @@
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+#include <Adafruit_Fingerprint.h>
+
+#if (defined(__AVR__) || defined(ESP8266)) && !defined(__AVR_ATmega2560__)
+SoftwareSerial mySerial(2, 3); // For Software Serial on Uno, etc.
+#else
+#define mySerial Serial1 // For boards like Leonardo
+#endif
+
+Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
+LiquidCrystal_I2C lcd(0x27, 16, 2); // Adjust the address if necessary
+
+// Variables to track time and date
+unsigned long previousMillis = 0;
+int seconds = 0;
+int minutes = 0;
+int hours = 0;
+int day = 1;     // Starting date
+int month = 10;  // Starting month
+int year = 2024; // Starting year
+
+void setup() {
+  Serial.begin(9600);
+  while (!Serial);  // Wait for the serial port to open
+  delay(100);
+  
+  // Initialize the LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.print("Initializing...");
+
+  // Set the data rate for the sensor serial port
+  finger.begin(57600);
+  delay(5);
+  if (finger.verifyPassword()) {
+    Serial.println("Found fingerprint sensor!");
+    lcd.clear();
+    lcd.print("Sensor Found");
+    delay(500);
+  } else {
+    Serial.println("Did not find fingerprint sensor :(");
+    lcd.clear();
+    lcd.print("No Sensor!");
+    delay(500);
+    while (1) { delay(1); }
+  }
+
+  Serial.println(F("Reading sensor parameters"));
+  finger.getParameters();
+  
+  // Print the parameters to the serial monitor
+  Serial.print(F("Sensor contains ")); 
+  finger.getTemplateCount();
+  if (finger.templateCount == 0) {
+    Serial.print("Sensor doesn't contain any fingerprint data. Please run the 'enroll' example.");
+    lcd.clear();
+    lcd.print("Enroll a Finger");
+    delay(500);
+  } else {
+    Serial.println("Waiting for valid finger...");
+    lcd.clear();
+    lcd.print("Waiting for Finger");
+    delay(500);
+  }
+}
+
+void loop() {
+  getFingerprintID();
+  delay(50); // Don't run this at full speed.
+  
+  // Update the time every second
+  unsigned long currentMillis = millis();
+  if (currentMillis - previousMillis >= 1000) {
+    previousMillis = currentMillis;
+    seconds++;
+    if (seconds >= 60) {
+      seconds = 0;
+      minutes++;
+      if (minutes >= 60) {
+        minutes = 0;
+        hours++;
+        if (hours >= 24) {
+          hours = 0;
+          // Update the date when hours reset to 0
+          day++;
+          if (day > daysInMonth(month, year)) {
+            day = 1;
+            month++;
+            if (month > 12) {
+              month = 1;
+              year++;
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+uint8_t getFingerprintID() {
+  uint8_t p = finger.getImage();
+  switch (p) {
+    case FINGERPRINT_OK:
+      Serial.println("Image taken");
+      lcd.clear();
+      lcd.print("Image taken");
+      delay(500);
+      break;
+    case FINGERPRINT_NOFINGER:
+      Serial.println("No finger detected");
+      showDateTime(); // Show date and time if no finger is detected
+      return p;
+    case FINGERPRINT_PACKETRECIEVEERR:
+      Serial.println("Communication error");
+      lcd.clear();
+      lcd.print("Comm Error");
+      delay(500);
+      return p;
+    case FINGERPRINT_IMAGEFAIL:
+      Serial.println("Imaging error");
+      lcd.clear();
+      lcd.print("Image Error");
+      delay(500);
+      return p;
+    default:
+      Serial.println("Unknown error");
+      lcd.clear();
+      lcd.print("Unknown Error");
+      delay(500);
+      return p;
+  }
+
+  // Convert the image to a template
+  p = finger.image2Tz();
+  switch (p) {
+    case FINGERPRINT_OK:
+      Serial.println("Image converted");
+      lcd.clear();
+      lcd.print("Image Converted");
+      delay(500);
+      break;
+    case FINGERPRINT_IMAGEMESS:
+      Serial.println("Image too messy");
+      lcd.clear();
+      lcd.print("Image Messy");
+      delay(500);
+      return p;
+    case FINGERPRINT_PACKETRECIEVEERR:
+      Serial.println("Communication error");
+      lcd.clear();
+      lcd.print("Comm Error");
+      delay(500);
+      return p;
+    case FINGERPRINT_FEATUREFAIL:
+      Serial.println("Could not find fingerprint features");
+      lcd.clear();
+      lcd.print("Feature Error");
+      delay(500);
+      return p;
+    case FINGERPRINT_INVALIDIMAGE:
+      Serial.println("Could not find fingerprint features");
+      lcd.clear();
+      lcd.print("Invalid Image");
+      delay(500);
+      return p;
+    default:
+      Serial.println("Unknown error");
+      lcd.clear();
+      lcd.print("Unknown Error");
+      delay(500);
+      return p;
+  }
+
+  // Search for a match
+  p = finger.fingerSearch();
+  if (p == FINGERPRINT_OK) {
+    Serial.println("Found a print match!");
+    lcd.clear();
+    lcd.print("Match Found!");
+    delay(500);
+  } else if (p == FINGERPRINT_PACKETRECIEVEERR) {
+    Serial.println("Communication error");
+    lcd.clear();
+    lcd.print("Comm Error");
+    delay(500);
+    return p;
+  } else if (p == FINGERPRINT_NOTFOUND) {
+    Serial.println("Did not find a match");
+    lcd.clear();
+    lcd.print("No Match");
+    delay(500);
+    return p;
+  } else {
+    Serial.println("Unknown error");
+    lcd.clear();
+    lcd.print("Unknown Error");
+    delay(500);
+    return p;
+  }
+
+  // Print match details
+  Serial.print("Found ID #"); Serial.print(finger.fingerID);
+  Serial.print(" with confidence of "); Serial.println(finger.confidence);
+  lcd.clear();
+  lcd.print("ID: "); lcd.print(finger.fingerID);
+  lcd.setCursor(0, 1);
+  lcd.print("Conf: "); lcd.print(finger.confidence);
+  delay(500); // Wait for 500 ms before the next loop iteration
+
+  return finger.fingerID;
+}
+
+// Function to calculate the number of days in a given month
+int daysInMonth(int month, int year) {
+  switch (month) {
+    case 1: case 3: case 5: case 7: case 8: case 10: case 12: return 31;
+    case 4: case 6: case 9: case 11: return 30;
+    case 2: return isLeapYear(year) ? 29 : 28;
+    default: return 0; // Invalid month
+  }
+}
+
+// Function to check if a year is a leap year
+bool isLeapYear(int year) {
+  return (year % 4 == 0 && year % 100 != 0) || (year % 400 == 0);
+}
+
+// Function to display date and time on the LCD
+void showDateTime() {
+  lcd.clear();
+  lcd.print("Date: ");
+  if (day < 10) lcd.print('0'); // Add leading zero if needed
+  lcd.print(day);
+  lcd.print('/');
+  if (month < 10) lcd.print('0'); // Add leading zero if needed
+  lcd.print(month);
+  lcd.print('/');
+  lcd.print(year);
+  
+  lcd.setCursor(0, 1); // Move to the second row
+  lcd.print("Time: ");
+  if (hours < 10) lcd.print('0'); // Add leading zero if needed
+  lcd.print(hours);
+  lcd.print(':');
+  if (minutes < 10) lcd.print('0'); // Add leading zero if needed
+  lcd.print(minutes);
+  lcd.print(':');
+  if (seconds < 10) lcd.print('0'); // Add leading zero if needed
+  lcd.print(seconds);
+  delay(1000); // Wait for 1 second
+}
